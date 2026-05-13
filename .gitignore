@@ -1,0 +1,9 @@
+.DS_Store
+*.log
+__pycache__/
+*.pyc
+.python-version
+
+# Local test artifacts
+/test-fixtures/
+/.tmp/

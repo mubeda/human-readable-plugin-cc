@@ -1,0 +1,21 @@
+{
+  "name": "human-readable-cc",
+  "owner": {
+    "name": "mubeda"
+  },
+  "metadata": {
+    "description": "Turn any folder of Markdown into a polished, self-contained, offline-portable HTML viewer from inside Claude Code.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "human-readable",
+      "description": "Render a folder of .md files into a single self-contained HTML viewer (Mermaid, KaTeX, PlantUML, GFM, admonitions). Editorial-tech aesthetic, light + dark themes, fully offline.",
+      "version": "0.1.0",
+      "author": {
+        "name": "mubeda"
+      },
+      "source": "./plugins/human-readable"
+    }
+  ]
+}

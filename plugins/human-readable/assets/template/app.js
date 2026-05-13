@@ -153,9 +153,14 @@
       .replace(/\s+/g, '-');
   }
 
+  // Per-render heading-id dedup map. Lives at module scope (not inside the
+  // marked-setup block) so renderFile can clear it before each parse — otherwise
+  // a second page containing `# Overview` would get id `overview-1`, and theme
+  // toggles (which re-render the same page) would keep incrementing.
+  const headingSeenIds = new Map();
+
   if (window.marked) {
     const renderer = new marked.Renderer();
-    const seenIds = new Map();
 
     renderer.heading = function (text, level) {
       let rawText;
@@ -163,8 +168,8 @@
       else if (text && typeof text === 'object') rawText = text.raw || text.text || '';
       else rawText = String(text || '');
       let id = slugify(rawText);
-      const count = seenIds.get(id) || 0;
-      seenIds.set(id, count + 1);
+      const count = headingSeenIds.get(id) || 0;
+      headingSeenIds.set(id, count + 1);
       if (count > 0) id = id + '-' + count;
       const inner = typeof text === 'string' ? text : (text.text || rawText);
       return `<h${level} id="${id}">${inner}<a href="#${currentPath}#${id}" class="hr-anchor" aria-hidden="true">#</a></h${level}>`;
@@ -183,10 +188,17 @@
       if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('#') || href.startsWith('data:')) {
         return `<a href="${escapeHtml(href)}"${titleAttr}${href.startsWith('http') ? ' target="_blank" rel="noopener"' : ''}>${text}</a>`;
       }
-      // Resolve relative .md link against currentPath.
-      const resolved = resolveRelative(currentPath, href);
+      // Resolve relative .md link against currentPath. Split off any
+      // `#fragment` so a link like `api.md#auth` still routes internally —
+      // resolving the whole thing would produce `dir/api.md#auth`, which is
+      // never a key in `content`.
+      const hashIdx = href.indexOf('#');
+      const pathPart = hashIdx === -1 ? href : href.slice(0, hashIdx);
+      const fragment = hashIdx === -1 ? '' : href.slice(hashIdx + 1);
+      const resolved = resolveRelative(currentPath, pathPart);
       if (content[resolved]) {
-        return `<a href="#${encodeURI(resolved)}"${titleAttr}>${text}</a>`;
+        const frag = fragment ? '#' + fragment : '';
+        return `<a href="#${encodeURI(resolved)}${frag}"${titleAttr}>${text}</a>`;
       }
       // Strip .md fragment-only attempts (e.g. ./README.md) when target absent — still render as anchor.
       return `<a href="${escapeHtml(href)}"${titleAttr}>${text}</a>`;
@@ -211,6 +223,212 @@
       else if (p !== '.' && p !== '') fromDir.push(p);
     }
     return fromDir.join('/');
+  }
+
+  // ===== ASCII-diagram detection =====
+  // Detects fenced code blocks that look like hand-drawn ASCII diagrams
+  // (box-drawing characters, ASCII arrows) so the reader can spot blocks
+  // that would render as SVG if they were re-fenced as ```mermaid.
+  const ASCII_DIAGRAM_CHARS = /[─-▟▶◀▼▲←-⇿]/;
+  const ASCII_ARROW_PATTERN = /(--+>|<--+|<==+|==+>|<->|<-+>)/;
+  const ASCII_PLAIN_INFO = new Set(['', 'text', 'txt', 'plain', 'plaintext', 'diagram', 'ascii']);
+
+  function isAsciiDiagramBody(body) {
+    const lines = body.split('\n');
+    if (lines.length < 3) return false;
+    let drawn = 0;
+    for (const line of lines) {
+      if (ASCII_DIAGRAM_CHARS.test(line)) { drawn++; continue; }
+      if (ASCII_ARROW_PATTERN.test(line) && /[|│]/.test(line)) drawn++;
+    }
+    return drawn >= 2;
+  }
+
+  // Normalize and hash a code-block body so the markdown-scanned inventory and
+  // the DOM-walked banners agree on a stable id even when their counts diverge
+  // (e.g. fences nested inside list items that the scanner doesn't see).
+  function normalizeDiagramBody(body) {
+    return body.split(/\r?\n/).map(l => l.replace(/\s+$/, '')).join('\n').replace(/\n+$/, '');
+  }
+  function diagramHash(body) {
+    let h = 0x811c9dc5;
+    const s = normalizeDiagramBody(body);
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return ('00000000' + (h >>> 0).toString(16)).slice(-8);
+  }
+
+  function scanMarkdownForAsciiDiagrams(md) {
+    // Indent is allowed to grow — fences inside list items are commonly
+    // indented 4+ spaces. We don't enforce CommonMark's strict 0–3 rule
+    // because false positives are harmless (worklist may list a block the
+    // renderer doesn't mark) while false negatives would hide real cases.
+    const lines = md.split('\n');
+    const results = [];
+    let i = 0;
+    while (i < lines.length) {
+      const m = lines[i].match(/^(\s*)(```+|~~~+)([^\s`]*)\s*(.*)$/);
+      if (!m) { i++; continue; }
+      const fence = m[2];
+      const info = (m[3] || '').trim().toLowerCase();
+      const openLine = i;
+      i++;
+      const bodyStart = i;
+      const fenceChar = fence[0];
+      while (i < lines.length) {
+        const c = lines[i].match(/^\s*(```+|~~~+)\s*$/);
+        if (c && c[1][0] === fenceChar && c[1].length >= fence.length) break;
+        i++;
+      }
+      const bodyEnd = i;
+      const body = lines.slice(bodyStart, bodyEnd).join('\n');
+      if (ASCII_PLAIN_INFO.has(info) && isAsciiDiagramBody(body)) {
+        const previewLines = lines.slice(bodyStart, Math.min(bodyEnd, bodyStart + 4));
+        results.push({
+          lineStart: openLine + 1,
+          lineEnd: bodyEnd + 1,
+          info,
+          preview: previewLines.join('\n'),
+          hash: diagramHash(body)
+        });
+      }
+      i = bodyEnd + 1;
+    }
+    return results;
+  }
+
+  function buildAsciiDiagramInventory() {
+    const byPath = [];
+    for (const [path, entry] of Object.entries(content)) {
+      if (!entry || typeof entry.markdown !== 'string') continue;
+      const items = scanMarkdownForAsciiDiagrams(entry.markdown);
+      if (items.length === 0) continue;
+      // Mirror annotateAsciiDiagrams' duplicate-suffix scheme so identical
+      // diagrams in the same file get distinct anchors (hash, hash-2, hash-3,
+      // …). The scanner emits items in document order, matching the DOM walk.
+      const seen = new Map();
+      for (const it of items) {
+        const n = (seen.get(it.hash) || 0) + 1;
+        seen.set(it.hash, n);
+        it.anchor = n === 1 ? it.hash : it.hash + '-' + n;
+      }
+      byPath.push({ path, items });
+    }
+    byPath.sort((a, b) => a.path.localeCompare(b.path));
+    return byPath;
+  }
+
+  const asciiInventory = buildAsciiDiagramInventory();
+  const asciiTotal = asciiInventory.reduce((n, g) => n + g.items.length, 0);
+
+  function buildAsciiPanel() {
+    if (asciiTotal === 0) return;
+
+    // Header badge
+    const headerRight = document.querySelector('.hr-header-right');
+    const badge = document.createElement('button');
+    badge.id = 'hr-ascii-badge';
+    badge.className = 'hr-ascii-badge';
+    badge.title = 'Open ASCII diagram worklist';
+    badge.setAttribute('aria-label', 'Open ASCII diagram worklist');
+    badge.innerHTML =
+      '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<rect x="2" y="2" width="5" height="5" rx="0.5"/><rect x="9" y="2" width="5" height="5" rx="0.5"/>' +
+      '<rect x="2" y="9" width="5" height="5" rx="0.5"/><rect x="9" y="9" width="5" height="5" rx="0.5"/>' +
+      '<line x1="7" y1="4.5" x2="9" y2="4.5"/><line x1="4.5" y1="7" x2="4.5" y2="9"/>' +
+      '</svg>' +
+      '<span class="hr-ascii-badge-count">' + asciiTotal + '</span>' +
+      '<span class="hr-ascii-badge-label">ASCII diagram' + (asciiTotal === 1 ? '' : 's') + '</span>';
+    if (headerRight && headerRight.firstChild) headerRight.insertBefore(badge, headerRight.firstChild);
+    else if (headerRight) headerRight.appendChild(badge);
+
+    // Panel
+    const panel = document.createElement('aside');
+    panel.id = 'hr-ascii-panel';
+    panel.className = 'hr-ascii-panel';
+    panel.setAttribute('aria-hidden', 'true');
+    const headerHtml =
+      '<header class="hr-ascii-panel-header">' +
+      '<div class="hr-ascii-panel-titlerow">' +
+      '<h2>ASCII diagrams</h2>' +
+      '<button class="hr-ascii-panel-close" aria-label="Close worklist" title="Close">' +
+      '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="3" y1="3" x2="13" y2="13"/><line x1="13" y1="3" x2="3" y2="13"/></svg>' +
+      '</button>' +
+      '</div>' +
+      '<p class="hr-ascii-panel-help">' +
+      '<strong>' + asciiTotal + '</strong> code block' + (asciiTotal === 1 ? '' : 's') + ' across <strong>' + asciiInventory.length + '</strong> file' + (asciiInventory.length === 1 ? '' : 's') +
+      ' look like hand-drawn diagrams in plain fences. Rewrite each one in Mermaid syntax (or another diagram language) and fence it as <code>```mermaid</code> to render as SVG — just changing the fence label will not work.' +
+      '</p>' +
+      '</header>';
+    panel.innerHTML = headerHtml + '<div class="hr-ascii-panel-body"></div>';
+    document.body.appendChild(panel);
+
+    const body = panel.querySelector('.hr-ascii-panel-body');
+    for (const group of asciiInventory) {
+      const groupEl = document.createElement('div');
+      groupEl.className = 'hr-ascii-group';
+      const head = document.createElement('div');
+      head.className = 'hr-ascii-group-head';
+      head.innerHTML = '<span class="hr-ascii-group-path">' + escapeHtml(group.path) + '</span>' +
+                       '<span class="hr-ascii-group-count">' + group.items.length + '</span>';
+      groupEl.appendChild(head);
+      group.items.forEach((it) => {
+        const row = document.createElement('a');
+        row.className = 'hr-ascii-item';
+        row.href = '#' + encodeURI(group.path) + '#hr-asciidiag-' + it.anchor;
+        row.innerHTML =
+          '<div class="hr-ascii-item-meta">line ' + it.lineStart + '</div>' +
+          '<pre class="hr-ascii-item-preview">' + escapeHtml(it.preview) + '</pre>';
+        row.addEventListener('click', () => setAsciiPanelOpen(false));
+        groupEl.appendChild(row);
+      });
+      body.appendChild(groupEl);
+    }
+
+    function setAsciiPanelOpen(open) {
+      panel.classList.toggle('hr-ascii-panel-open', !!open);
+      panel.setAttribute('aria-hidden', open ? 'false' : 'true');
+      badge.classList.toggle('hr-ascii-badge-active', !!open);
+    }
+    badge.addEventListener('click', () => setAsciiPanelOpen(!panel.classList.contains('hr-ascii-panel-open')));
+    panel.querySelector('.hr-ascii-panel-close').addEventListener('click', () => setAsciiPanelOpen(false));
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && panel.classList.contains('hr-ascii-panel-open')) setAsciiPanelOpen(false);
+    });
+  }
+
+  buildAsciiPanel();
+
+  // Annotate ASCII diagram fences in the current article. Each banner's id is a
+  // content-derived hash so worklist deep-links stay correct even if the
+  // markdown scanner and the DOM walker disagree on which blocks they catch.
+  function annotateAsciiDiagrams(root) {
+    const seen = new Set();
+    root.querySelectorAll('pre > code').forEach(code => {
+      if (code.classList.contains('language-mermaid')) return;
+      const langCls = Array.from(code.classList).find(c => c.indexOf('language-') === 0);
+      const lang = langCls ? langCls.slice('language-'.length).toLowerCase() : '';
+      if (lang && !ASCII_PLAIN_INFO.has(lang)) return;
+      const body = code.textContent;
+      if (!isAsciiDiagramBody(body)) return;
+      code.classList.add('hr-ascii-diagram');
+      const pre = code.parentElement;
+      pre.classList.add('hr-ascii-diagram-pre');
+      // De-dupe ids when two identical diagrams appear in the same article.
+      let id = 'hr-asciidiag-' + diagramHash(body);
+      let suffix = 1;
+      while (seen.has(id)) { id = 'hr-asciidiag-' + diagramHash(body) + '-' + (++suffix); }
+      seen.add(id);
+      const banner = document.createElement('div');
+      banner.className = 'hr-ascii-banner';
+      banner.id = id;
+      banner.innerHTML =
+        '<span class="hr-ascii-banner-icon" aria-hidden="true">⚠</span>' +
+        '<span class="hr-ascii-banner-text">Looks like an ASCII diagram. Rewrite it in Mermaid syntax inside a <code>```mermaid</code> fence to render as SVG — re-fencing the existing ASCII content will not work.</span>';
+      pre.parentNode.insertBefore(banner, pre);
+    });
   }
 
   // ===== rendering =====
@@ -295,20 +513,24 @@
     }
     currentPath = path;
     breadcrumbEl.textContent = path;
-    // Reset heading ID dedup map per render.
-    if (window.marked) {
-      const r = marked.defaults.renderer;
-      // Recreate seenIds — done implicitly by marking heading IDs unique per render.
-    }
+    headingSeenIds.clear();
     let html = window.marked ? marked.parse(entry.markdown) : escapeHtml(entry.markdown);
     html = transformAdmonitions(html);
     articleEl.innerHTML = renderFrontmatter(entry.frontmatter) + html;
+
+    // Annotate ASCII-art "diagrams" in plain fences BEFORE hljs runs — otherwise
+    // hljs adds a synthetic language-* class to unlabeled fences and the detector
+    // can't tell them apart from real code blocks.
+    annotateAsciiDiagrams(articleEl);
 
     // Highlight.js
     if (window.hljs) {
       articleEl.querySelectorAll('pre code').forEach(el => {
         // Don't highlight mermaid blocks (they have class language-mermaid)
         if (el.classList.contains('language-mermaid')) return;
+        // Don't highlight detected ASCII diagrams — auto-detect would falsely
+        // color box-drawing characters as scss/csharp tokens.
+        if (el.classList.contains('hr-ascii-diagram')) return;
         try { window.hljs.highlightElement(el); } catch (e) { /* ignore */ }
       });
     }

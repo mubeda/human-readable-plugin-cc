@@ -1,6 +1,6 @@
 {
   "name": "human-readable",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Render a folder of .md files into a single self-contained HTML viewer (Mermaid, KaTeX, PlantUML, GFM, admonitions). Editorial-tech aesthetic, light + dark themes, fully offline.",
   "author": {
     "name": "mubeda"

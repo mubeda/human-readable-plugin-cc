@@ -461,9 +461,16 @@ def read_text(p: Path) -> str:
     return p.read_text(encoding="utf-8")
 
 
+_CLOSE_SCRIPT_RE = re.compile(r"</(script)", re.IGNORECASE)
+
 def inject_into_script(text: str) -> str:
-    """Prevent </script> in user data from terminating our <script> tag."""
-    return text.replace("</script>", "<\\/script>")
+    """Prevent </script> in user data from terminating our <script> tag.
+
+    HTML closes script tags case-insensitively, so the match must too —
+    a markdown example containing ``</SCRIPT>`` would otherwise terminate
+    the JSON payload script tag and corrupt the viewer.
+    """
+    return _CLOSE_SCRIPT_RE.sub(r"<\\/\1", text)
 
 
 # ===== build =====

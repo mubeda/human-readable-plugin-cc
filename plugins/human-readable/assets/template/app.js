@@ -629,4 +629,88 @@
     document.querySelector('.hr-layout').classList.toggle('hr-sidebar-open');
     document.querySelector('.hr-layout').classList.toggle('hr-sidebar-collapsed');
   });
+
+  // Sidebar resize
+  (function setupSidebarResize() {
+    const MIN = 180;
+    const MAX_PX = 720;
+    const MAX_VW = 0.6;
+    const DEFAULT = 288;
+    const STORAGE_KEY = 'hr-sidebar-width';
+
+    const layout = document.querySelector('.hr-layout');
+    const resizer = document.getElementById('hr-resizer');
+    if (!layout || !resizer) return;
+
+    const isMobile = () => window.matchMedia('(max-width: 900px)').matches;
+    const clamp = (v) => {
+      const max = Math.min(MAX_PX, Math.floor(window.innerWidth * MAX_VW));
+      return Math.max(MIN, Math.min(max, v));
+    };
+    const applyWidth = (w) => {
+      layout.style.setProperty('--hr-sidebar-width', w + 'px');
+    };
+    const persist = (w) => {
+      try { localStorage.setItem(STORAGE_KEY, String(w)); } catch (e) { /* ignore */ }
+    };
+
+    // Restore on load.
+    if (!isMobile()) {
+      const stored = parseInt(localStorage.getItem(STORAGE_KEY) || '', 10);
+      if (Number.isFinite(stored)) applyWidth(clamp(stored));
+    }
+
+    let dragging = false;
+    resizer.addEventListener('pointerdown', (e) => {
+      if (isMobile()) return;
+      if (layout.classList.contains('hr-sidebar-collapsed')) return;
+      dragging = true;
+      resizer.setPointerCapture(e.pointerId);
+      document.body.classList.add('hr-resizing');
+      layout.classList.add('hr-resizing');
+      e.preventDefault();
+    });
+    resizer.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const left = layout.getBoundingClientRect().left;
+      applyWidth(clamp(e.clientX - left));
+    });
+    const endDrag = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      try { resizer.releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+      document.body.classList.remove('hr-resizing');
+      layout.classList.remove('hr-resizing');
+      const w = parseFloat(getComputedStyle(layout).getPropertyValue('--hr-sidebar-width'));
+      if (Number.isFinite(w)) persist(Math.round(w));
+    };
+    resizer.addEventListener('pointerup', endDrag);
+    resizer.addEventListener('pointercancel', endDrag);
+
+    // Double-click to reset.
+    resizer.addEventListener('dblclick', () => {
+      if (isMobile()) return;
+      applyWidth(DEFAULT);
+      persist(DEFAULT);
+    });
+
+    // Keyboard adjustment.
+    resizer.addEventListener('keydown', (e) => {
+      if (isMobile()) return;
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      const step = e.shiftKey ? 64 : 16;
+      const current = parseFloat(getComputedStyle(layout).getPropertyValue('--hr-sidebar-width')) || DEFAULT;
+      const next = clamp(current + (e.key === 'ArrowRight' ? step : -step));
+      applyWidth(next);
+      persist(Math.round(next));
+      e.preventDefault();
+    });
+
+    // Re-clamp on window resize so MAX_VW stays sensible.
+    window.addEventListener('resize', () => {
+      if (isMobile()) return;
+      const current = parseFloat(getComputedStyle(layout).getPropertyValue('--hr-sidebar-width'));
+      if (Number.isFinite(current)) applyWidth(clamp(current));
+    });
+  })();
 })();

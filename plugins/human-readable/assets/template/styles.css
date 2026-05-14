@@ -229,12 +229,46 @@ html, body {
 
 /* ---------- layout ---------- */
 .hr-layout {
+  --hr-sidebar-width: 288px;
   display: grid;
-  grid-template-columns: 288px 1fr;
+  grid-template-columns: var(--hr-sidebar-width) 6px 1fr;
   height: calc(100vh - 56px);
 }
-.hr-layout.hr-sidebar-collapsed { grid-template-columns: 0 1fr; }
+.hr-layout.hr-sidebar-collapsed { grid-template-columns: 0 0 1fr; }
 .hr-layout.hr-sidebar-collapsed .hr-sidebar { transform: translateX(-100%); }
+.hr-layout.hr-sidebar-collapsed .hr-resizer { display: none; }
+
+/* ---------- resizer ---------- */
+.hr-resizer {
+  position: relative;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 120ms ease;
+  touch-action: none;
+}
+.hr-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--hr-rule-soft);
+  transform: translateX(-0.5px);
+  transition: background 120ms ease, width 120ms ease;
+}
+.hr-resizer:hover::after,
+.hr-resizer:focus-visible::after,
+.hr-layout.hr-resizing .hr-resizer::after {
+  background: var(--hr-accent-soft);
+  width: 2px;
+}
+.hr-resizer:focus-visible { outline: none; }
+body.hr-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+body.hr-resizing * { cursor: col-resize !important; }
 
 /* ---------- sidebar ---------- */
 .hr-sidebar {
@@ -784,7 +818,8 @@ html, body {
 
 /* ---------- mobile ---------- */
 @media (max-width: 900px) {
-  .hr-layout { grid-template-columns: 0 1fr; }
+  .hr-layout { grid-template-columns: 0 0 1fr; }
+  .hr-resizer { display: none; }
   .hr-sidebar {
     position: fixed;
     top: 56px;

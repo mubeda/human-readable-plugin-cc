@@ -1,0 +1,52 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e3]:
+      - button "Toggle sidebar" [ref=e4] [cursor=pointer]:
+        - img [ref=e5]
+      - heading "hr-test" [level=1] [ref=e6]
+    - generic [ref=e7]:
+      - generic [ref=e8]: •README.md
+      - button "Toggle theme" [ref=e9] [cursor=pointer]:
+        - img [ref=e10]
+  - generic [ref=e16]:
+    - complementary [ref=e17]:
+      - searchbox "Filter files…" [ref=e19]
+      - navigation [ref=e20]:
+        - generic [ref=e21] [cursor=pointer]:
+          - img [ref=e22]
+          - img [ref=e24]
+          - generic [ref=e26]: architecture
+        - generic [ref=e27]:
+          - link "Connectivity Rules Engine Component" [ref=e28] [cursor=pointer]:
+            - /url: "#architecture/connectivity-rules-engine-component.md"
+            - img [ref=e29]
+            - generic [ref=e31]: Connectivity Rules Engine Component
+          - link "Network Path Forking Strategy" [ref=e32] [cursor=pointer]:
+            - /url: "#architecture/network-path-forking-strategy.md"
+            - img [ref=e33]
+            - generic [ref=e35]: Network Path Forking Strategy
+        - link "Test Docs" [ref=e36] [cursor=pointer]:
+          - /url: "#README.md"
+          - img [ref=e37]
+          - generic [ref=e39]: Test Docs
+        - link "Long Filename" [ref=e40] [cursor=pointer]:
+          - /url: "#very-long-filename-to-trigger-ellipsis-truncation.md"
+          - img [ref=e41]
+          - generic [ref=e43]: Long Filename
+    - separator "Resize sidebar" [ref=e44]
+    - main [ref=e45]:
+      - article [ref=e46]:
+        - heading "Test Docs" [level=1] [ref=e47]:
+          - text: Test Docs
+          - link [ref=e48] [cursor=pointer]:
+            - /url: "#README.md#test-docs"
+            - text: "#"
+        - paragraph [ref=e49]: Some long path names to test the sidebar resize feature.
+        - heading "Features" [level=2] [ref=e50]:
+          - text: Features
+          - link [ref=e51] [cursor=pointer]:
+            - /url: "#README.md#features"
+            - text: "#"
+        - list [ref=e52]:
+          - listitem [ref=e53]: — Item 1
+          - listitem [ref=e54]: — Item 2
